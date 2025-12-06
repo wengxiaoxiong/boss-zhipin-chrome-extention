@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../index.css'
 
@@ -16,17 +16,48 @@ interface FeedSection {
   dataHeight?: string
 }
 
+interface UserInfo {
+  nickname?: string
+  redId?: string
+  avatar?: string
+  description?: string
+  tags?: string[]
+  gender?: 'male' | 'female'
+  location?: string
+  followingCount?: string
+  followersCount?: string
+  likesAndCollectionsCount?: string
+}
+
 interface UserPostedFeedsData {
   feeds: FeedSection[]
   count: number
   timestamp: string
   url: string
+  userInfo?: UserInfo // 仅在 userProfile 模式下存在
 }
 
 interface MessageResponse {
   success: boolean
   data?: unknown
   error?: string
+}
+
+interface HistoryItem {
+  key: string
+  data: {
+    collectedAt?: string
+    updatedAt?: string
+    count?: number
+    totalCount?: number
+    url?: string
+    action?: string
+    userInfo?: UserInfo
+    feeds?: FeedSection[]
+    newFeeds?: FeedSection[]
+    [key: string]: unknown
+  }
+  type: 'collection' | 'update'
 }
 
 export function Popup() {
@@ -36,6 +67,84 @@ export function Popup() {
   const [isProfilePage, setIsProfilePage] = useState(false)
   const [isSearchPage, setIsSearchPage] = useState(false)
   const [currentUrl, setCurrentUrl] = useState<string>('')
+  const [showHistory, setShowHistory] = useState(false)
+  const [history, setHistory] = useState<HistoryItem[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [selectedHistory, setSelectedHistory] = useState<HistoryItem | null>(null)
+  
+  // 使用 Map 存储所有已见过的 feeds，key 是 title（用于去重和增量更新）
+  const [feedsMapRef] = useState<{ current: Map<string, FeedSection> }>({ current: new Map() })
+  
+  /**
+   * 获取 feed 的唯一标识（优先使用 noteId，因为它是唯一标识符）
+   * 如果没有 noteId，则使用 link（通常包含 noteId）
+   * 最后才使用 title（因为不同笔记可能有相同标题）
+   */
+  const getFeedKey = useCallback((feed: FeedSection): string => {
+    // 优先使用 noteId（最可靠的唯一标识）
+    if (feed.noteId) {
+      return `noteId:${feed.noteId}`
+    }
+    // 其次使用 link（通常包含 noteId，且是唯一的）
+    if (feed.link) {
+      return `link:${feed.link}`
+    }
+    // 最后使用 title（但加上作者名作为组合键，提高唯一性）
+    if (feed.title) {
+      const authorPart = feed.authorName ? `:${feed.authorName}` : ''
+      return `title:${feed.title}${authorPart}`
+    }
+    // 如果都没有，使用 index（这种情况应该很少）
+    return `index:${feed.index}`
+  }, [])
+  
+  /**
+   * 合并新的 feeds 到 Map 中
+   */
+  const mergeNewFeeds = useCallback((newFeeds: FeedSection[], url: string, userInfo?: UserInfo) => {
+    const newMap = new Map(feedsMapRef.current)
+    
+    // 如果 URL 变化，清空 Map（新页面）
+    const currentUrlKey = '__current_url__'
+    const lastUrl = newMap.get(currentUrlKey)?.link
+    if (lastUrl && lastUrl !== url) {
+      newMap.clear()
+      console.log('[Popup] 检测到 URL 变化，清空 feeds Map')
+    }
+    
+    // 添加新的 feeds
+    let addedCount = 0
+    for (const feed of newFeeds) {
+      const key = getFeedKey(feed)
+      if (!newMap.has(key)) {
+        newMap.set(key, feed)
+        addedCount++
+      }
+    }
+    
+    // 保存当前 URL
+    newMap.set(currentUrlKey, { index: -1, link: url } as FeedSection)
+    
+    // 更新 Map 引用
+    feedsMapRef.current = newMap
+    
+    // 更新 feedsData 状态
+    const allFeeds = Array.from(newMap.values()).filter(
+      (feed) => feed.index !== -1 // 排除 __current_url__ 这个特殊项
+    )
+    
+    setFeedsData({
+      feeds: allFeeds,
+      count: allFeeds.length,
+      timestamp: new Date().toISOString(),
+      url: url,
+      userInfo: userInfo || feedsData?.userInfo, // 保留已有的 userInfo 或使用新的
+    })
+    
+    if (addedCount > 0) {
+      console.log(`[Popup] 合并了 ${addedCount} 条新笔记（总计 ${allFeeds.length} 条）`)
+    }
+  }, [feedsMapRef, getFeedKey, feedsData?.userInfo])
 
   // 检查并注入 content script
   const ensureContentScript = async (tabId: number): Promise<{ success: boolean; error?: string }> => {
@@ -159,7 +268,9 @@ export function Popup() {
       console.log('收到响应:', response)
       
       if (response.success && response.data) {
-        setFeedsData(response.data as UserPostedFeedsData)
+        const data = response.data as UserPostedFeedsData
+        // 使用增量更新方式合并数据
+        mergeNewFeeds(data.feeds, data.url, data.userInfo)
       } else {
         throw new Error(response.error || '获取小红书数据失败')
       }
@@ -227,7 +338,9 @@ export function Popup() {
       console.log('[Popup] 收到响应:', response)
       
       if (response.success && response.data) {
-        setFeedsData(response.data as UserPostedFeedsData)
+        const data = response.data as UserPostedFeedsData
+        // 使用增量更新方式合并数据
+        mergeNewFeeds(data.feeds, data.url, data.userInfo)
       } else {
         throw new Error(response.error || '获取小红书搜索结果数据失败')
       }
@@ -250,14 +363,354 @@ export function Popup() {
     }
   }
 
+  // 获取历史记录
+  const getHistory = async () => {
+    setHistoryLoading(true)
+    try {
+      const response = await chrome.runtime.sendMessage({ action: 'getHistory' }) as MessageResponse
+      if (response.success && response.data) {
+        setHistory(response.data as HistoryItem[])
+      } else {
+        console.error('获取历史记录失败:', response.error)
+      }
+    } catch (err) {
+      console.error('获取历史记录异常:', err)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  // 删除历史记录
+  const deleteHistory = async (keys: string[]) => {
+    if (!confirm(`确定要删除 ${keys.length} 条历史记录吗？`)) {
+      return
+    }
+    
+    try {
+      const response = await chrome.runtime.sendMessage({ 
+        action: 'deleteHistory',
+        keys 
+      }) as MessageResponse
+      
+      if (response.success) {
+        // 重新获取历史记录
+        await getHistory()
+        // 如果删除的是当前选中的记录，清空选中
+        if (selectedHistory && keys.includes(selectedHistory.key)) {
+          setSelectedHistory(null)
+        }
+      } else {
+        alert('删除失败: ' + response.error)
+      }
+    } catch (err) {
+      console.error('删除历史记录异常:', err)
+      alert('删除失败: ' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
   useEffect(() => {
     checkPageType()
+    // 初始加载历史记录
+    getHistory()
   }, [])
+
+  // 监听来自 content script 的自动更新消息（增量更新）
+  useEffect(() => {
+    const messageListener = (
+      message: { 
+        action: string
+        data?: {
+          newFeeds?: FeedSection[]
+          totalCount?: number
+          timestamp?: string
+          url?: string
+        }
+      },
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      _sender: chrome.runtime.MessageSender,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      _sendResponse: (response?: unknown) => void
+    ) => {
+      if (message.action === 'feedsUpdated' && message.data) {
+        console.log('[Popup] 收到增量更新消息:', message.data)
+        const { newFeeds = [], url = window.location.href } = message.data
+        
+        if (newFeeds.length > 0) {
+          mergeNewFeeds(newFeeds, url)
+        }
+        
+        setFeedsError(null) // 清除之前的错误
+      }
+    }
+
+    chrome.runtime.onMessage.addListener(messageListener)
+
+    // 清理监听器
+    return () => {
+      chrome.runtime.onMessage.removeListener(messageListener)
+    }
+  }, [mergeNewFeeds])
 
   return (
     <div className="w-96 max-h-[600px] overflow-y-auto p-4 bg-white">
-      <h1 className="text-2xl font-bold mb-4 text-gray-800">WXX版 小红书数据获取</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold text-gray-800">WXX版 小红书数据获取</h1>
+        <button
+          onClick={() => {
+            setShowHistory(!showHistory)
+            if (!showHistory) {
+              getHistory()
+            }
+          }}
+          className="px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors"
+        >
+          {showHistory ? '返回' : '历史记录'}
+        </button>
+      </div>
       
+      {showHistory ? (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-800">历史爬取记录</h2>
+            <button
+              onClick={getHistory}
+              disabled={historyLoading}
+              className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:bg-gray-200 disabled:text-gray-500 transition-colors"
+            >
+              {historyLoading ? '加载中...' : '刷新'}
+            </button>
+          </div>
+          
+          {historyLoading ? (
+            <div className="text-center py-8 text-gray-500">加载中...</div>
+          ) : history.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">暂无历史记录</div>
+          ) : (
+            <div className="space-y-2">
+              {history.map((item) => {
+                const timestamp = item.data.collectedAt || item.data.updatedAt || ''
+                const date = timestamp ? new Date(timestamp).toLocaleString('zh-CN') : '未知时间'
+                const count = item.data.count || item.data.totalCount || 0
+                const url = item.data.url || ''
+                const action = item.data.action || (item.type === 'collection' ? '采集' : '更新')
+                
+                return (
+                  <div
+                    key={item.key}
+                    className={`border rounded-lg p-3 cursor-pointer transition-colors ${
+                      selectedHistory?.key === item.key
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 hover:border-gray-300 bg-white'
+                    }`}
+                    onClick={() => setSelectedHistory(item)}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`px-2 py-0.5 text-xs rounded ${
+                            item.type === 'collection'
+                              ? 'bg-pink-100 text-pink-700'
+                              : 'bg-green-100 text-green-700'
+                          }`}>
+                            {item.type === 'collection' ? '采集' : '更新'}
+                          </span>
+                          <span className="text-xs text-gray-500">{action}</span>
+                        </div>
+                        <div className="text-sm font-medium text-gray-800 mb-1">
+                          {count} 条笔记
+                        </div>
+                        <div className="text-xs text-gray-500 mb-1">{date}</div>
+                        {url && (
+                          <div className="text-xs text-gray-400 truncate" title={url}>
+                            {url}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          deleteHistory([item.key])
+                        }}
+                        className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="删除"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          
+          {selectedHistory && (
+            <div className="border border-gray-300 rounded-lg p-3 space-y-3 mt-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-base">记录详情</h3>
+                <button
+                  onClick={() => setSelectedHistory(null)}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  关闭
+                </button>
+              </div>
+              
+              <div className="text-xs text-gray-600 space-y-1">
+                <div>
+                  <span className="font-medium">类型：</span>
+                  {selectedHistory.type === 'collection' ? '采集' : '更新'}
+                </div>
+                <div>
+                  <span className="font-medium">时间：</span>
+                  {selectedHistory.data.collectedAt || selectedHistory.data.updatedAt || '未知'}
+                </div>
+                <div>
+                  <span className="font-medium">数量：</span>
+                  {selectedHistory.data.count || selectedHistory.data.totalCount || 0} 条
+                </div>
+                {selectedHistory.data.url && (
+                  <div>
+                    <span className="font-medium">URL：</span>
+                    <a
+                      href={selectedHistory.data.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-500 hover:underline break-all"
+                    >
+                      {selectedHistory.data.url}
+                    </a>
+                  </div>
+                )}
+              </div>
+              
+              {selectedHistory.data.userInfo && (
+                <div className="border border-blue-200 rounded-lg p-3 bg-blue-50 space-y-2">
+                  <h4 className="font-semibold text-sm text-blue-800">用户信息</h4>
+                  <div className="flex items-start gap-3">
+                    {selectedHistory.data.userInfo.avatar && (
+                      <img 
+                        src={selectedHistory.data.userInfo.avatar} 
+                        alt={selectedHistory.data.userInfo.nickname || '用户头像'} 
+                        className="w-12 h-12 rounded-full object-cover shrink-0 border-2 border-blue-200"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0 space-y-1">
+                      {selectedHistory.data.userInfo.nickname && (
+                        <div className="font-semibold text-sm text-gray-800">
+                          {selectedHistory.data.userInfo.nickname}
+                        </div>
+                      )}
+                      {selectedHistory.data.userInfo.redId && (
+                        <div className="text-xs text-gray-600">
+                          小红书号：{selectedHistory.data.userInfo.redId}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {selectedHistory.data.feeds && selectedHistory.data.feeds.length > 0 && (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                  <h4 className="font-semibold text-sm">笔记列表</h4>
+                  {selectedHistory.data.feeds.slice(0, 10).map((feed: FeedSection, idx: number) => (
+                    <div key={idx} className="border border-gray-200 rounded p-2 bg-gray-50 text-xs">
+                      <div className="flex gap-2">
+                        {feed.coverImage && (
+                          <img 
+                            src={feed.coverImage} 
+                            alt={feed.title || '封面'} 
+                            className="w-12 h-12 object-cover rounded shrink-0"
+                          />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          {feed.title && (
+                            <div className="font-medium text-gray-800 truncate mb-1">
+                              {feed.title}
+                            </div>
+                          )}
+                          {feed.authorName && (
+                            <div className="text-gray-600 mb-1">{feed.authorName}</div>
+                          )}
+                          {feed.likeCount && (
+                            <div className="text-gray-500">❤️ {feed.likeCount}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {selectedHistory.data.feeds.length > 10 && (
+                    <div className="text-xs text-gray-500 text-center">
+                      还有 {selectedHistory.data.feeds.length - 10} 条笔记...
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {selectedHistory.data.newFeeds && selectedHistory.data.newFeeds.length > 0 && (
+                <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                  <h4 className="font-semibold text-sm">新增笔记 ({selectedHistory.data.newFeeds.length} 条)</h4>
+                  {selectedHistory.data.newFeeds.slice(0, 10).map((feed: FeedSection, idx: number) => (
+                    <div key={idx} className="border border-gray-200 rounded p-2 bg-gray-50 text-xs">
+                      <div className="flex gap-2">
+                        {feed.coverImage && (
+                          <img 
+                            src={feed.coverImage} 
+                            alt={feed.title || '封面'} 
+                            className="w-12 h-12 object-cover rounded shrink-0"
+                          />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          {feed.title && (
+                            <div className="font-medium text-gray-800 truncate mb-1">
+                              {feed.title}
+                            </div>
+                          )}
+                          {feed.authorName && (
+                            <div className="text-gray-600 mb-1">{feed.authorName}</div>
+                          )}
+                          {feed.likeCount && (
+                            <div className="text-gray-500">❤️ {feed.likeCount}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {selectedHistory.data.newFeeds.length > 10 && (
+                    <div className="text-xs text-gray-500 text-center">
+                      还有 {selectedHistory.data.newFeeds.length - 10} 条笔记...
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              <button
+                onClick={() => {
+                  const json = JSON.stringify(selectedHistory.data, null, 2)
+                  navigator.clipboard.writeText(json)
+                  alert('数据已复制到剪贴板')
+                }}
+                className="w-full px-3 py-1.5 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
+              >
+                复制 JSON 数据
+              </button>
+            </div>
+          )}
+          
+          {history.length > 0 && (
+            <button
+              onClick={() => {
+                if (confirm('确定要删除所有历史记录吗？')) {
+                  deleteHistory(history.map(item => item.key))
+                }
+              }}
+              className="w-full px-3 py-1.5 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200 transition-colors"
+            >
+              清空所有历史记录
+            </button>
+          )}
+        </div>
+      ) : (
       <div className="space-y-4">
         {!isProfilePage && !isSearchPage ? (
           <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
@@ -314,6 +767,74 @@ export function Popup() {
                 <div className="text-xs text-gray-500 mb-2">
                   {new Date(feedsData.timestamp).toLocaleString('zh-CN')}
                 </div>
+                
+                {/* 用户信息显示（仅在个人主页模式下） */}
+                {feedsData.userInfo && (
+                  <div className="border border-blue-200 rounded-lg p-3 bg-blue-50 space-y-2">
+                    <h3 className="font-semibold text-base text-blue-800 mb-2">用户信息</h3>
+                    <div className="flex items-start gap-3">
+                      {feedsData.userInfo.avatar && (
+                        <img 
+                          src={feedsData.userInfo.avatar} 
+                          alt={feedsData.userInfo.nickname || '用户头像'} 
+                          className="w-16 h-16 rounded-full object-cover shrink-0 border-2 border-blue-200"
+                        />
+                      )}
+                      <div className="flex-1 min-w-0 space-y-1">
+                        {feedsData.userInfo.nickname && (
+                          <div className="font-semibold text-sm text-gray-800">
+                            {feedsData.userInfo.nickname}
+                            {feedsData.userInfo.gender && (
+                              <span className="ml-1 text-xs">
+                                {feedsData.userInfo.gender === 'male' ? '♂' : '♀'}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {feedsData.userInfo.redId && (
+                          <div className="text-xs text-gray-600">
+                            小红书号：{feedsData.userInfo.redId}
+                          </div>
+                        )}
+                        {feedsData.userInfo.location && (
+                          <div className="text-xs text-gray-600">
+                            📍 {feedsData.userInfo.location}
+                          </div>
+                        )}
+                        {feedsData.userInfo.description && (
+                          <div className="text-xs text-gray-700 mt-2 whitespace-pre-line line-clamp-3">
+                            {feedsData.userInfo.description}
+                          </div>
+                        )}
+                        {feedsData.userInfo.tags && feedsData.userInfo.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {feedsData.userInfo.tags.map((tag, idx) => (
+                              <span 
+                                key={idx}
+                                className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {(feedsData.userInfo.followingCount || feedsData.userInfo.followersCount || feedsData.userInfo.likesAndCollectionsCount) && (
+                          <div className="flex gap-4 mt-2 text-xs text-gray-600">
+                            {feedsData.userInfo.followingCount && (
+                              <span>关注 {feedsData.userInfo.followingCount}</span>
+                            )}
+                            {feedsData.userInfo.followersCount && (
+                              <span>粉丝 {feedsData.userInfo.followersCount}</span>
+                            )}
+                            {feedsData.userInfo.likesAndCollectionsCount && (
+                              <span>获赞 {feedsData.userInfo.likesAndCollectionsCount}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-2 max-h-[400px] overflow-y-auto">
                   {feedsData.feeds.map((feed) => (
                     <div key={feed.index} className="border border-gray-200 rounded p-2 bg-gray-50">
@@ -387,6 +908,7 @@ export function Popup() {
           </>
         )}
       </div>
+      )}
     </div>
   )
 }

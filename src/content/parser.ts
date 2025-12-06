@@ -1,5 +1,5 @@
 // 笔记数据解析器
-import type { FeedSection } from './types';
+import type { FeedSection, UserInfo } from './types';
 
 /**
  * 从链接中提取 noteId
@@ -220,5 +220,128 @@ export function parseFeedsFromContainer(
   console.log(`${logPrefix} 成功提取 ${feeds.length} 个笔记数据`);
   
   return feeds;
+}
+
+/**
+ * 从页面中解析用户信息（user-info）
+ */
+export function parseUserInfo(): UserInfo | undefined {
+  const userInfoElement = document.querySelector('.user-info');
+  
+  if (!userInfoElement) {
+    console.log('[用户信息] 未找到 .user-info 元素');
+    return undefined;
+  }
+  
+  const userInfo: UserInfo = {};
+  
+  // 提取用户名
+  const userNameElement = userInfoElement.querySelector('.user-nickname .user-name');
+  if (userNameElement) {
+    userInfo.nickname = userNameElement.textContent?.trim() || undefined;
+  }
+  
+  // 提取小红书号
+  const redIdElement = userInfoElement.querySelector('.user-redId');
+  if (redIdElement) {
+    const redIdText = redIdElement.textContent?.trim() || '';
+    // 提取 "小红书号：6972779965" 中的数字部分
+    const redIdMatch = redIdText.match(/小红书号[：:]\s*(\S+)/);
+    if (redIdMatch) {
+      userInfo.redId = redIdMatch[1];
+    } else {
+      // 如果没有匹配到，尝试直接提取数字
+      const numberMatch = redIdText.match(/(\d+)/);
+      if (numberMatch) {
+        userInfo.redId = numberMatch[1];
+      }
+    }
+  }
+  
+  // 提取头像（优先查找 .user-info .avatar img.user-image，如果没有则查找任何 .avatar img）
+  const avatarImg = userInfoElement.querySelector('.avatar img.user-image') as HTMLImageElement || 
+                    userInfoElement.querySelector('.avatar img') as HTMLImageElement;
+  if (avatarImg?.src) {
+    userInfo.avatar = avatarImg.src;
+  }
+  
+  // 提取用户描述
+  const descElement = userInfoElement.querySelector('.user-desc');
+  if (descElement) {
+    userInfo.description = descElement.textContent?.trim() || undefined;
+  }
+  
+  // 提取标签
+  const tagItems = Array.from(userInfoElement.querySelectorAll('.user-tags .tag-item'));
+  const tags: string[] = [];
+  tagItems.forEach((tagItem) => {
+    // 检查是否是性别标签
+    const genderElement = tagItem.querySelector('.gender');
+    if (genderElement) {
+      const svgUse = genderElement.querySelector('use');
+      if (svgUse) {
+        const href = svgUse.getAttribute('xlink:href') || svgUse.getAttribute('href');
+        if (href === '#male') {
+          userInfo.gender = 'male';
+        } else if (href === '#female') {
+          userInfo.gender = 'female';
+        }
+      }
+    } else {
+      // 其他标签（地区、职业等）
+      const tagText = tagItem.textContent?.trim();
+      if (tagText) {
+        // 检查是否是地区信息（包含省、市、区、县，或者是常见地区名称）
+        const locationKeywords = ['省', '市', '区', '县', '自治区', '特别行政区'];
+        const isLocation = locationKeywords.some(keyword => tagText.includes(keyword)) ||
+                          // 常见省份/城市名称模式（如：广东深圳、北京、上海等）
+                          /^[^省市区县]+(?:省|市|区|县|自治区|特别行政区)?[^省市区县]*(?:省|市|区|县|自治区|特别行政区)?$/.test(tagText);
+        
+        if (isLocation && !userInfo.location) {
+          // 如果还没有设置 location，则设置为这个标签
+          userInfo.location = tagText;
+        } else if (!isLocation) {
+          // 非地区标签，添加到 tags 数组
+          tags.push(tagText);
+        }
+      }
+    }
+  });
+  
+  if (tags.length > 0) {
+    userInfo.tags = tags;
+  }
+  
+  // 提取互动数据（关注、粉丝、获赞与收藏）
+  const interactionItems = Array.from(userInfoElement.querySelectorAll('.user-interactions > div'));
+  interactionItems.forEach((item) => {
+    const countElement = item.querySelector('.count');
+    const showsElement = item.querySelector('.shows');
+    
+    if (countElement && showsElement) {
+      const count = countElement.textContent?.trim() || '';
+      const label = showsElement.textContent?.trim() || '';
+      
+      if (label.includes('关注')) {
+        userInfo.followingCount = count;
+      } else if (label.includes('粉丝')) {
+        userInfo.followersCount = count;
+      } else if (label.includes('获赞') || label.includes('收藏')) {
+        userInfo.likesAndCollectionsCount = count;
+      }
+    }
+  });
+  
+  console.log('[用户信息] 成功提取用户信息:', {
+    nickname: userInfo.nickname,
+    redId: userInfo.redId,
+    hasAvatar: !!userInfo.avatar,
+    hasDescription: !!userInfo.description,
+    tagsCount: userInfo.tags?.length || 0,
+    gender: userInfo.gender,
+    location: userInfo.location,
+  });
+  
+  return userInfo;
 }
 
