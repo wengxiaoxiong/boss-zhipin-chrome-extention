@@ -83,7 +83,7 @@ const response = await chrome.runtime.sendMessage({
 ## 项目结构
 
 ```
-xhs-ext/
+chrome-extension-template/
 ├── manifest.json          # Manifest V3 配置
 ├── src/
 │   ├── content/           # Content Script

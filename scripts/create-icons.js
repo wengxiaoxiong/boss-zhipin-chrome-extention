@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 
 const iconSvg = `<svg width="128" height="128" xmlns="http://www.w3.org/2000/svg">
   <rect width="128" height="128" fill="#4F46E5"/>
-  <text x="64" y="80" font-family="Arial" font-size="48" fill="white" text-anchor="middle" font-weight="bold">XHS</text>
+  <text x="64" y="80" font-family="Arial" font-size="48" fill="white" text-anchor="middle" font-weight="bold">EXT</text>
 </svg>`;
 
 const publicDir = path.join(__dirname, '../public');

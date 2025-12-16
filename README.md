@@ -48,7 +48,7 @@ A modern Chrome extension template built with Manifest V3, React, TypeScript, an
 1. Clone or use this template:
 ```bash
 git clone <your-repo-url>
-cd xhs-ext
+cd chrome-extension-template
 ```
 
 2. Install dependencies:

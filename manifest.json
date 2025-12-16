@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "XHS Extension",
+  "name": "Chrome Extension Template",
   "version": "1.0.0",
   "description": "Chrome extension with storage and DOM access",
   "permissions": [
