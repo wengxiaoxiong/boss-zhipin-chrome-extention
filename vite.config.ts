@@ -32,19 +32,34 @@ export default defineConfig({
             }
           })
 
-          // 处理 popup.html：将 src/popup/index.html 复制到根目录并重命名为 popup.html
+          // 处理 sidepanel.html：将 dist/src/sidepanel/index.html 移动到根目录
+          const sidepanelHtmlPath = resolve(distDir, 'src/sidepanel/index.html')
+          const targetSidepanelPath = resolve(distDir, 'sidepanel.html')
+
+          if (existsSync(sidepanelHtmlPath)) {
+            let htmlContent = readFileSync(sidepanelHtmlPath, 'utf-8')
+
+            // 更新路径：将绝对路径 /assets/ 改为相对路径 ./assets/
+            htmlContent = htmlContent.replace(/\/assets\//g, './assets/')
+
+            writeFileSync(targetSidepanelPath, htmlContent)
+            console.log('✓ sidepanel.html created from src/sidepanel/index.html')
+          } else {
+            console.warn('⚠️  src/sidepanel/index.html not found')
+          }
+
+          // 处理 popup.html：将 dist/src/popup/index.html 移动到根目录
           const popupHtmlPath = resolve(distDir, 'src/popup/index.html')
           const targetPopupPath = resolve(distDir, 'popup.html')
-          
+
           if (existsSync(popupHtmlPath)) {
             let htmlContent = readFileSync(popupHtmlPath, 'utf-8')
-            
+
             // 更新路径：将绝对路径 /assets/ 改为相对路径 ./assets/
-            // 因为文件从 src/popup/ 移到了根目录，路径需要调整
             htmlContent = htmlContent.replace(/\/assets\//g, './assets/')
-            
+
             writeFileSync(targetPopupPath, htmlContent)
-            console.log('✓ popup.html created')
+            console.log('✓ popup.html created from src/popup/index.html')
           } else {
             console.warn('⚠️  src/popup/index.html not found')
           }
@@ -59,6 +74,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         popup: resolve(__dirname, 'src/popup/index.html'),
+        sidepanel: resolve(__dirname, 'src/sidepanel/index.html'),
         content: resolve(__dirname, 'src/content/content.ts'),
         background: resolve(__dirname, 'src/background/background.ts'),
       },
@@ -70,7 +86,7 @@ export default defineConfig({
         },
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: (assetInfo) => {
-          if (assetInfo.name === 'popup.html') {
+          if (assetInfo.name === 'sidepanel.html') {
             return '[name][extname]'
           }
           return 'assets/[name]-[hash][extname]'

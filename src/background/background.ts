@@ -100,3 +100,7 @@ chrome.runtime.onInstalled.addListener((details: chrome.runtime.InstalledDetails
     version: chrome.runtime.getManifest().version,
   })
 })
+
+// 注意：当 manifest.json 中配置了 side_panel.default_path 时，
+// Chrome 才能提供「在侧边栏打开」等入口；
+// action 点击行为由 manifest.action.default_popup 控制（此项目使用 popup 里的按钮触发打开侧边栏）
