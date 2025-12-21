@@ -30,7 +30,8 @@ export type MessageAction =
   | 'getAutoGreetStatus'
 
 export interface MessageRequest {
-  action: MessageAction
+  action?: MessageAction
+  type?: 'START_RESUME_COLLECTOR' | 'STOP_RESUME_COLLECTOR' | 'GET_RESUME_COLLECTOR_STATUS'
 }
 
 export interface PageInfo {
