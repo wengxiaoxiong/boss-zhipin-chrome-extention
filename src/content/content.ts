@@ -411,57 +411,74 @@ async function previewAndDownloadResume(candidateName: string): Promise<boolean>
 
 // 点击下载按钮
 async function clickDownloadButton(): Promise<boolean> {
-  try {
+  return new Promise((resolve) => {
     console.log('[Resume Collector] 查找下载按钮...')
     
-    // 方案1: 通过SVG图标查找
-    const downloadIconUse = document.querySelector<SVGUseElement>('use[xlink\\:href="#icon-attacthment-download"]')
-    if (downloadIconUse) {
-      const iconContent = downloadIconUse.closest('.icon-content') as HTMLElement
-      if (iconContent) {
-        console.log('[Resume Collector] ✅ 找到下载按钮（方案1）')
-        iconContent.click()
-        await new Promise(r => setTimeout(r, 1500))
-        console.log('[Resume Collector] ✅ 已点击下载')
-        return true
+    // 核心优化：1. 简化选择器，定位到可交互的父元素 2. 等待元素加载 3. 兼容SVG点击
+    function clickTargetButton() {
+      // 简化选择器：定位到包裹SVG的可点击父元素（关键！）
+      // 处理动态ID：先查找包含 resume-footer-wrap 的对话框
+      const dialog = document.querySelector('[id^="boss-dynamic-dialog"]')
+      if (!dialog) {
+        console.warn('[Resume Collector] 未找到对话框')
+        return false
       }
-    }
-    
-    // 方案2: 通过class查找
-    const iconContents = document.querySelectorAll<HTMLElement>('.icon-content')
-    for (const container of iconContents) {
-      const svg = container.querySelector('svg.boss-svg')
-      const useEl = svg?.querySelector('use')
-      const href = useEl?.getAttribute('xlink:href') || useEl?.getAttribute('href')
       
-      if (href && href.includes('download')) {
-        console.log('[Resume Collector] ✅ 找到下载按钮（方案2）')
-        container.click()
-        await new Promise(r => setTimeout(r, 1500))
-        console.log('[Resume Collector] ✅ 已点击下载')
+      const targetElement = dialog.querySelector(
+        '.resume-footer-wrap div:nth-child(3) > span'
+      ) as HTMLElement | null
+
+      // 排查1：元素是否存在
+      if (!targetElement) {
+        console.warn('[Resume Collector] 目标元素未找到，可能还没加载完成')
+        return false
+      }
+
+      // 排查2：强制触发点击（兼容SVG/普通元素）
+      try {
+        // 方案A：优先用原生click（普通元素）
+        targetElement.click()
+        console.log('[Resume Collector] ✅ 元素点击成功（原生click）')
+        return true
+      } catch {
+        // 方案B：兼容SVG元素（模拟鼠标点击事件）
+        console.log('[Resume Collector] 原生click失效，尝试模拟鼠标点击')
+        const clickEvent = new MouseEvent('click', {
+          bubbles: true,    // 冒泡（触发父元素的点击事件）
+          cancelable: true,
+          view: window,
+          composed: true    // 兼容Shadow DOM/SVG
+        })
+        targetElement.dispatchEvent(clickEvent)
+        console.log('[Resume Collector] ✅ 已发送模拟点击事件')
         return true
       }
     }
-    
-    // 方案3: 查找包含"下载"文本的按钮或链接
-    const allElements = document.querySelectorAll('*')
-    for (const el of allElements) {
-      const text = el.textContent?.trim()
-      if (text === '下载' && (el.tagName === 'BUTTON' || el.tagName === 'A' || el.classList.contains('icon-content'))) {
-        console.log('[Resume Collector] ✅ 找到下载按钮（方案3）')
-        ;(el as HTMLElement).click()
-        await new Promise(r => setTimeout(r, 1500))
-        console.log('[Resume Collector] ✅ 已点击下载')
-        return true
+
+    // 等待元素加载：每300ms检查一次，最多等10秒（可调整）
+    const checkTimer = setInterval(() => {
+      const dialog = document.querySelector('[id^="boss-dynamic-dialog"]')
+      if (dialog) {
+        const isExist = dialog.querySelector('.resume-footer-wrap div:nth-child(3) > span')
+        if (isExist) {
+          const clicked = clickTargetButton()
+          clearInterval(checkTimer) // 找到元素后停止检查
+          if (clicked) {
+            resolve(true)
+          } else {
+            resolve(false)
+          }
+        }
       }
-    }
-    
-    console.log('[Resume Collector] ❌ 未找到下载按钮')
-    return false
-  } catch (err) {
-    console.error('[Resume Collector] 点击下载按钮失败:', err)
-    return false
-  }
+    }, 300)
+
+    // 超时保护：10秒后停止检查（避免无限轮询）
+    setTimeout(() => {
+      clearInterval(checkTimer)
+      console.warn('[Resume Collector] 超时未找到目标元素')
+      resolve(false)
+    }, 10000)
+  })
 }
 
 // 关闭预览窗口
@@ -547,40 +564,44 @@ async function resumeCollectorLoop() {
   
   for (const candidate of candidates) {
     if (!isResumeCollecting) break
-    
+
+    // 滚动到当前候选人卡片
+    scrollToElement(candidate);
+    await new Promise(r => setTimeout(r, 800)); // 等待页面滚动动画完成
+
     const info = getCandidateInfo(candidate)
     if (!info) continue
-    
+
     console.log(`[Resume Collector] 处理候选人: ${info.name} (${info.id})`)
-    
+
     // 检查是否已处理过
     if (processedCandidates.has(info.id)) {
       console.log('[Resume Collector] ⏭️ 已处理过，跳过')
       continue
     }
-    
+
     // 检查是否正在等待回复
     const isWaiting = waitingForResumeCandidates.has(info.id)
     if (isWaiting) {
       console.log('[Resume Collector] ⏳ 正在等待回复，重新检查状态...')
     }
-    
+
     // 更新当前候选人
     resumeCollectorStats.currentCandidate = info.name
     notifyResumeCollectorStatus()
-    
+
     // 选中候选人
     const selected = await selectCandidate(candidate)
     if (!selected) {
       console.log('[Resume Collector] ❌ 选中失败，跳过')
       continue
     }
-    
+
     // 检查简历状态
     const status = checkResumeStatus()
-    
+
     let processed = false
-    
+
     if (status === ResumeStatus.NO_RESPONSE) {
       if (isWaiting) {
         console.log('[Resume Collector] ⏳ 仍在等待回复，保持等待状态')
@@ -624,7 +645,7 @@ async function resumeCollectorLoop() {
       waitingForResumeCandidates.delete(info.id)
       processed = true
     }
-    
+
     if (processed) {
       processedCandidates.add(info.id)
       resumeCollectorStats.processedCount++
@@ -635,11 +656,10 @@ async function resumeCollectorLoop() {
       resumeCollectorStats.currentCandidate = null
       notifyResumeCollectorStatus()
     }
-    
+
     // 等待后继续下一个
     await new Promise(r => setTimeout(r, 2000))
   }
-  
   console.log('[Resume Collector] ========== Loop End ==========\n')
   
   // 继续循环
@@ -836,7 +856,7 @@ chrome.runtime.onMessage.addListener((
   _sender: chrome.runtime.MessageSender,
   sendResponse: (response: MessageResponse) => void
 ) => {
-  console.log('[Content Script] 📨 收到:', request.action || request.type)
+  // console.log('[Content Script] 📨 收到:', request.action || request.type)
   
   if (request.action === 'ping') {
     sendResponse({ success: true, data: { isInFrame: isInRecommendFrame } })
