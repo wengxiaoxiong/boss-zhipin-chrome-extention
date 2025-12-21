@@ -94,6 +94,31 @@ async function getAllResumes(): Promise<any[]> {
   })
 }
 
+// 根据姓名查询简历是否存在
+async function checkResumeExistsByName(name: string): Promise<boolean> {
+  const db = await openDatabase()
+  
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly')
+    const objectStore = transaction.objectStore(STORE_NAME)
+    const nameIndex = objectStore.index('name')
+    const request = nameIndex.getAll(name)
+    
+    request.onsuccess = () => {
+      const exists = request.result.length > 0
+      console.log(`[DB] 查询候选人"${name}"的简历:`, exists ? '已存在' : '不存在')
+      resolve(exists)
+    }
+    
+    request.onerror = () => {
+      console.error('[DB] 查询失败:', request.error)
+      reject(request.error)
+    }
+    
+    transaction.oncomplete = () => db.close()
+  })
+}
+
 // 清空简历数据
 async function clearAllResumes(): Promise<void> {
   const db = await openDatabase()
@@ -141,6 +166,17 @@ chrome.runtime.onMessage.addListener((
     getAllResumes()
       .then((resumes) => {
         sendResponse({ success: true, data: resumes })
+      })
+      .catch((error) => {
+        sendResponse({ success: false, error: error.message })
+      })
+    return true
+  }
+  
+  if (request.type === 'CHECK_RESUME_EXISTS') {
+    checkResumeExistsByName(request.data?.name || '')
+      .then((exists) => {
+        sendResponse({ success: true, data: { exists } })
       })
       .catch((error) => {
         sendResponse({ success: false, error: error.message })

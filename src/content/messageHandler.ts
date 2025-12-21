@@ -13,8 +13,7 @@ import {
   stopResumeCollector,
   getResumeCollectorStatus,
 } from './features/resumeCollector'
-
-const isInRecommendFrame = window.location.href.includes('/web/frame/recommend')
+import { PageType, checkPageType } from './utils/pageCheck'
 
 /**
  * 处理来自 background/popup/sidepanel 的消息
@@ -27,7 +26,7 @@ export function handleMessage(
   // console.log('[Content Script] 📨 收到:', request.action || request.type)
 
   if (request.action === 'ping') {
-    sendResponse({ success: true, data: { isInFrame: isInRecommendFrame } })
+    sendResponse({ success: true, data: { isInFrame: checkPageType(PageType.RECOMMEND) } })
     return true
   }
 
@@ -37,7 +36,7 @@ export function handleMessage(
       data: {
         title: document.title,
         url: window.location.href,
-        isInFrame: isInRecommendFrame,
+        isInFrame: checkPageType(PageType.RECOMMEND),
       },
     })
     return true

@@ -3,8 +3,15 @@
  */
 
 import { clickWithHighlight, scrollToElementWithHighlight } from '../utils/dom'
+import { PageType, checkPageType, validatePageType } from '../utils/pageCheck'
+import { toastError, toastSuccess } from '../utils/toast'
 
-const isInRecommendFrame = window.location.href.includes('/web/frame/recommend')
+/**
+ * 动态检查是否在推荐页面
+ */
+function isInRecommendFrame(): boolean {
+  return checkPageType(PageType.RECOMMEND)
+}
 
 let isAutoGreeting = false
 const clickedCandidates = new Set<string>()
@@ -13,7 +20,7 @@ const clickedCandidates = new Set<string>()
  * 获取候选人卡片列表
  */
 export function getCandidateCards(): HTMLElement[] {
-  if (!isInRecommendFrame) return []
+  if (!isInRecommendFrame()) return []
 
   console.log('[Auto Greet] 开始查找候选人卡片...')
 
@@ -181,8 +188,12 @@ async function autoGreetLoop(): Promise<void> {
 
   if (!isAutoGreeting) return
 
-  if (!isInRecommendFrame) {
+  if (!isInRecommendFrame()) {
     console.error('[Auto Greet] ❌ 不在推荐页 iframe 中')
+    // 如果不在推荐页面，等待页面切换
+    if (isAutoGreeting) {
+      setTimeout(() => autoGreetLoop(), 3000)
+    }
     return
   }
 
@@ -239,16 +250,20 @@ async function autoGreetLoop(): Promise<void> {
 export function startAutoGreet() {
   console.log('[Auto Greet] 🚀 启动请求')
   console.log('[Auto Greet] 当前 URL:', window.location.href)
-  console.log('[Auto Greet] 在推荐页 iframe:', isInRecommendFrame)
+  console.log('[Auto Greet] 在推荐页 iframe:', isInRecommendFrame())
 
-  if (!isInRecommendFrame) {
+  // 验证页面类型
+  const pageValidation = validatePageType(PageType.RECOMMEND)
+  if (!pageValidation.success) {
+    toastError(pageValidation.error || '页面验证失败')
     return {
       success: false,
-      error: '请在推荐页面使用此功能',
+      error: pageValidation.error,
     }
   }
 
   if (isAutoGreeting) {
+    toastError('自动打招呼已在运行')
     return { success: false, error: '已在运行' }
   }
 
@@ -256,8 +271,12 @@ export function startAutoGreet() {
   clickedCandidates.clear()
 
   console.log('[Auto Greet] ✅ 已启动，2秒后开始')
+  toastSuccess('自动打招呼已启动')
   setTimeout(() => {
-    autoGreetLoop().catch(err => console.error('[Auto Greet] Loop 错误:', err))
+    autoGreetLoop().catch(err => {
+      console.error('[Auto Greet] Loop 错误:', err)
+      toastError('自动打招呼运行出错')
+    })
   }, 2000)
 
   return { success: true, data: { message: '已启动' } }
@@ -268,10 +287,12 @@ export function startAutoGreet() {
  */
 export function stopAutoGreet() {
   if (!isAutoGreeting) {
+    toastError('自动打招呼未在运行')
     return { success: false, error: '未在运行' }
   }
   isAutoGreeting = false
   console.log('[Auto Greet] 🛑 已停止')
+  toastSuccess('自动打招呼已停止')
   return { success: true, data: { message: '已停止', clickedCount: clickedCandidates.size } }
 }
 
@@ -284,7 +305,7 @@ export function getAutoGreetStatus() {
     data: {
       isRunning: isAutoGreeting,
       clickedCount: clickedCandidates.size,
-      isCorrectPage: isInRecommendFrame,
+      isCorrectPage: isInRecommendFrame(),
     },
   }
 }

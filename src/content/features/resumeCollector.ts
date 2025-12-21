@@ -4,8 +4,15 @@
 
 import { clickWithHighlight, scrollToElementWithHighlight } from '../utils/dom'
 import { scrollToElement } from '../utils/scroll'
+import { PageType, checkPageType, validatePageType } from '../utils/pageCheck'
+import { toastError, toastSuccess } from '../utils/toast'
 
-const isInChatPage = window.location.href.includes('/web/chat/index')
+/**
+ * 动态检查是否在聊天页面
+ */
+function isInChatPage(): boolean {
+  return checkPageType(PageType.CHAT)
+}
 
 // 简历收集器状态
 let isResumeCollecting = false
@@ -34,7 +41,7 @@ export const ResumeStatus = {
  * 获取候选人列表项
  */
 function getCandidateListItems(): HTMLElement[] {
-  if (!isInChatPage) return []
+  if (!isInChatPage()) return []
 
   console.log('[Resume Collector] 查找候选人列表...')
 
@@ -95,9 +102,29 @@ async function selectCandidate(listItem: HTMLElement): Promise<boolean> {
 }
 
 /**
+ * 检查数据库中是否已收集过该候选人的简历
+ */
+async function checkResumeInDatabase(candidateName: string): Promise<boolean> {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'CHECK_RESUME_EXISTS',
+      data: { name: candidateName },
+    })
+
+    if (response?.success) {
+      return response.data?.exists || false
+    }
+    return false
+  } catch (err) {
+    console.error('[Resume Collector] ❌ 查询数据库失败:', err)
+    return false
+  }
+}
+
+/**
  * 检查当前对话状态
  */
-function checkResumeStatus(): number {
+async function checkResumeStatus(candidateName?: string): Promise<number> {
   const messageList = document.querySelector('.chat-message-list')
   if (!messageList) {
     console.log('[Resume Collector] ❌ 未找到消息列表')
@@ -108,7 +135,17 @@ function checkResumeStatus(): number {
 
   console.log('[Resume Collector] 检查简历状态...')
 
-  // 情况3: 已有简历（点击预览附件简历）- 优先级最高
+  // 情况5: 在数据库中已经收集过简历
+  if (candidateName) {
+    const existsInDB = await checkResumeInDatabase(candidateName)
+    if (existsInDB) {
+      console.log('[Resume Collector] ✅ 情况5: 数据库中已收集过简历')
+      return ResumeStatus.ALREADY_COLLECTED
+    }
+  }
+
+
+  // 情况3: 消息框有附件简历（点击预览附件简历）
   if (html.includes('点击预览附件简历')) {
     console.log('[Resume Collector] ✅ 情况3: 已有简历（找到"点击预览附件简历"）')
     return ResumeStatus.HAS_RESUME
@@ -386,7 +423,7 @@ function notifyResumeCollectorStatus(): void {
     type: 'RESUME_COLLECTOR_STATUS_UPDATE',
     data: {
       isRunning: isResumeCollecting,
-      isCorrectPage: isInChatPage,
+      isCorrectPage: isInChatPage(),
       processedCount: resumeCollectorStats.processedCount,
       resumeCollectedCount: resumeCollectorStats.resumeCollectedCount,
       agreedCount: resumeCollectorStats.agreedCount,
@@ -433,8 +470,12 @@ async function resumeCollectorLoop(): Promise<void> {
 
   if (!isResumeCollecting) return
 
-  if (!isInChatPage) {
+  if (!isInChatPage()) {
     console.error('[Resume Collector] ❌ 不在聊天页面')
+    // 如果不在聊天页面，等待页面切换
+    if (isResumeCollecting) {
+      setTimeout(() => resumeCollectorLoop(), 3000)
+    }
     return
   }
 
@@ -484,8 +525,8 @@ async function resumeCollectorLoop(): Promise<void> {
       continue
     }
 
-    // 检查简历状态
-    const status = checkResumeStatus()
+    // 检查简历状态（传入候选人姓名以检查数据库）
+    const status = await checkResumeStatus(info.name)
 
     let processed = false
 
@@ -515,7 +556,7 @@ async function resumeCollectorLoop(): Promise<void> {
       await clickAgreeResume()
       // 同意后等待简历下载按钮出现
       await new Promise(r => setTimeout(r, 2000))
-      const newStatus = checkResumeStatus()
+      const newStatus = await checkResumeStatus(info.name)
       if (newStatus === ResumeStatus.HAS_RESUME) {
         await previewAndDownloadResume(info.name)
       }
@@ -563,14 +604,18 @@ async function resumeCollectorLoop(): Promise<void> {
 export function startResumeCollector() {
   console.log('[Resume Collector] 🚀 启动请求')
 
-  if (!isInChatPage) {
+  // 验证页面类型
+  const pageValidation = validatePageType(PageType.CHAT)
+  if (!pageValidation.success) {
+    toastError(pageValidation.error || '页面验证失败')
     return {
       success: false,
-      error: '请在聊天页面使用此功能',
+      error: pageValidation.error,
     }
   }
 
   if (isResumeCollecting) {
+    toastError('简历收集器已在运行')
     return { success: false, error: '已在运行' }
   }
 
@@ -586,10 +631,14 @@ export function startResumeCollector() {
   }
 
   console.log('[Resume Collector] ✅ 已启动，2秒后开始')
+  toastSuccess('简历收集器已启动')
   notifyResumeCollectorStatus()
 
   setTimeout(() => {
-    resumeCollectorLoop().catch(err => console.error('[Resume Collector] Loop 错误:', err))
+    resumeCollectorLoop().catch(err => {
+      console.error('[Resume Collector] Loop 错误:', err)
+      toastError('简历收集器运行出错')
+    })
   }, 2000)
 
   return { success: true, data: { message: '已启动' } }
@@ -600,6 +649,7 @@ export function startResumeCollector() {
  */
 export function stopResumeCollector() {
   if (!isResumeCollecting) {
+    toastError('简历收集器未在运行')
     return { success: false, error: '未在运行' }
   }
 
@@ -608,6 +658,7 @@ export function stopResumeCollector() {
   notifyResumeCollectorStatus()
 
   console.log('[Resume Collector] 🛑 已停止')
+  toastSuccess('简历收集器已停止')
   return {
     success: true,
     data: {
@@ -625,7 +676,7 @@ export function getResumeCollectorStatus() {
     success: true,
     data: {
       isRunning: isResumeCollecting,
-      isCorrectPage: isInChatPage,
+      isCorrectPage: isInChatPage(),
       processedCount: resumeCollectorStats.processedCount,
       resumeCollectedCount: resumeCollectorStats.resumeCollectedCount,
       agreedCount: resumeCollectorStats.agreedCount,
@@ -634,4 +685,86 @@ export function getResumeCollectorStatus() {
     },
   }
 }
+
+/**
+ * 初始化URL变化监听（用于SPA页面切换检测）
+ */
+function initUrlChangeListener(): void {
+  let lastUrl = window.location.href
+
+  // 监听 popstate 事件（浏览器前进/后退）
+  window.addEventListener('popstate', () => {
+    const currentUrl = window.location.href
+    if (currentUrl !== lastUrl) {
+      console.log('[Resume Collector] 🔄 检测到URL变化 (popstate):', currentUrl)
+      lastUrl = currentUrl
+      // 如果不在聊天页面且正在运行，通知状态更新
+      if (isResumeCollecting && !isInChatPage()) {
+        console.log('[Resume Collector] ⚠️ 已切换到非聊天页面，但收集器仍在运行')
+        notifyResumeCollectorStatus()
+      } else if (isResumeCollecting) {
+        notifyResumeCollectorStatus()
+      }
+    }
+  })
+
+  // 拦截 pushState 和 replaceState（SPA路由变化）
+  const originalPushState = history.pushState
+  const originalReplaceState = history.replaceState
+
+  history.pushState = function (...args) {
+    originalPushState.apply(history, args)
+    const currentUrl = window.location.href
+    if (currentUrl !== lastUrl) {
+      console.log('[Resume Collector] 🔄 检测到URL变化 (pushState):', currentUrl)
+      lastUrl = currentUrl
+      if (isResumeCollecting && !isInChatPage()) {
+        console.log('[Resume Collector] ⚠️ 已切换到非聊天页面，但收集器仍在运行')
+        notifyResumeCollectorStatus()
+      } else if (isResumeCollecting) {
+        notifyResumeCollectorStatus()
+      }
+    }
+  }
+
+  history.replaceState = function (...args) {
+    originalReplaceState.apply(history, args)
+    const currentUrl = window.location.href
+    if (currentUrl !== lastUrl) {
+      console.log('[Resume Collector] 🔄 检测到URL变化 (replaceState):', currentUrl)
+      lastUrl = currentUrl
+      if (isResumeCollecting && !isInChatPage()) {
+        console.log('[Resume Collector] ⚠️ 已切换到非聊天页面，但收集器仍在运行')
+        notifyResumeCollectorStatus()
+      } else if (isResumeCollecting) {
+        notifyResumeCollectorStatus()
+      }
+    }
+  }
+
+  // 使用 MutationObserver 监听DOM变化（作为备用方案）
+  const observer = new MutationObserver(() => {
+    const currentUrl = window.location.href
+    if (currentUrl !== lastUrl) {
+      console.log('[Resume Collector] 🔄 检测到URL变化 (MutationObserver):', currentUrl)
+      lastUrl = currentUrl
+      if (isResumeCollecting && !isInChatPage()) {
+        console.log('[Resume Collector] ⚠️ 已切换到非聊天页面，但收集器仍在运行')
+        notifyResumeCollectorStatus()
+      } else if (isResumeCollecting) {
+        notifyResumeCollectorStatus()
+      }
+    }
+  })
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+  })
+
+  console.log('[Resume Collector] ✅ URL变化监听已初始化')
+}
+
+// 初始化URL变化监听
+initUrlChangeListener()
 
