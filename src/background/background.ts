@@ -3,9 +3,121 @@ console.log('Background service worker loaded')
 
 interface MessageRequest {
   action: 'saveData' | 'getData' | 'getAllData' | 'clearData'
+  type?: string
   key?: string
   value?: any
+  data?: any
 }
+
+// ==================== IndexedDB 数据库管理 ====================
+
+const DB_NAME = 'BossRecruitmentDB'
+const DB_VERSION = 1
+const STORE_NAME = 'resumes'
+
+// 初始化数据库
+function openDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION)
+    
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result)
+    
+    request.onupgradeneeded = (event) => {
+      const db = (event.target as IDBOpenDBRequest).result
+      
+      // 创建简历表
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        const objectStore = db.createObjectStore(STORE_NAME, { 
+          keyPath: 'id', 
+          autoIncrement: true 
+        })
+        
+        // 创建索引
+        objectStore.createIndex('name', 'name', { unique: false })
+        objectStore.createIndex('timestamp', 'timestamp', { unique: false })
+        objectStore.createIndex('status', 'status', { unique: false })
+        
+        console.log('[DB] 数据库表创建成功')
+      }
+    }
+  })
+}
+
+// 保存简历信息到数据库
+async function saveResumeToDB(resumeInfo: {
+  name: string
+  timestamp: string
+  status: string
+}): Promise<number> {
+  const db = await openDatabase()
+  
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readwrite')
+    const objectStore = transaction.objectStore(STORE_NAME)
+    const request = objectStore.add(resumeInfo)
+    
+    request.onsuccess = () => {
+      console.log('[DB] 简历信息已保存，ID:', request.result)
+      resolve(request.result as number)
+    }
+    
+    request.onerror = () => {
+      console.error('[DB] 保存失败:', request.error)
+      reject(request.error)
+    }
+    
+    transaction.oncomplete = () => db.close()
+  })
+}
+
+// 获取所有简历信息
+async function getAllResumes(): Promise<any[]> {
+  const db = await openDatabase()
+  
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly')
+    const objectStore = transaction.objectStore(STORE_NAME)
+    const request = objectStore.getAll()
+    
+    request.onsuccess = () => {
+      console.log('[DB] 查询到', request.result.length, '条简历')
+      resolve(request.result)
+    }
+    
+    request.onerror = () => {
+      console.error('[DB] 查询失败:', request.error)
+      reject(request.error)
+    }
+    
+    transaction.oncomplete = () => db.close()
+  })
+}
+
+// 清空简历数据
+async function clearAllResumes(): Promise<void> {
+  const db = await openDatabase()
+  
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readwrite')
+    const objectStore = transaction.objectStore(STORE_NAME)
+    const request = objectStore.clear()
+    
+    request.onsuccess = () => {
+      console.log('[DB] 简历数据已清空')
+      resolve()
+    }
+    
+    request.onerror = () => {
+      console.error('[DB] 清空失败:', request.error)
+      reject(request.error)
+    }
+    
+    transaction.oncomplete = () => db.close()
+  })
+}
+
+// ==================== 消息监听 ====================
 
 // 监听来自 content script 或 popup 的消息
 chrome.runtime.onMessage.addListener((
@@ -13,6 +125,41 @@ chrome.runtime.onMessage.addListener((
   _sender: chrome.runtime.MessageSender,
   sendResponse: (response: any) => void
 ) => {
+  // 处理简历数据库操作
+  if (request.type === 'SAVE_RESUME_TO_DB') {
+    saveResumeToDB(request.data)
+      .then((id) => {
+        sendResponse({ success: true, data: { id } })
+      })
+      .catch((error) => {
+        sendResponse({ success: false, error: error.message })
+      })
+    return true
+  }
+  
+  if (request.type === 'GET_ALL_RESUMES') {
+    getAllResumes()
+      .then((resumes) => {
+        sendResponse({ success: true, data: resumes })
+      })
+      .catch((error) => {
+        sendResponse({ success: false, error: error.message })
+      })
+    return true
+  }
+  
+  if (request.type === 'CLEAR_ALL_RESUMES') {
+    clearAllResumes()
+      .then(() => {
+        sendResponse({ success: true })
+      })
+      .catch((error) => {
+        sendResponse({ success: false, error: error.message })
+      })
+    return true
+  }
+  
+  // 原有的存储操作
   if (request.action === 'saveData') {
     const { key, value } = request
     

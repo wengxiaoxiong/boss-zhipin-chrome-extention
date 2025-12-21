@@ -12,6 +12,16 @@ export interface AutoGreetStatus {
   isCorrectPage: boolean
 }
 
+export interface ResumeCollectorStatus {
+  isRunning: boolean
+  isCorrectPage: boolean
+  processedCount: number
+  resumeCollectedCount: number
+  agreedCount: number
+  requestedCount: number
+  currentCandidate: string | null
+}
+
 export type MessageAction =
   | 'ping'
   | 'getPageInfo'

@@ -2,12 +2,22 @@ import { createRoot } from 'react-dom/client'
 import '../index.css'
 import { useCurrentUrl } from '@/hooks/useCurrentUrl'
 import { useAutoGreet } from '@/hooks/useAutoGreet'
+import { useResumeCollector } from '@/hooks/useResumeCollector'
 import { PageInfoCard } from '@/components/sidepanel/PageInfoCard'
 import { AutoGreetCard } from '@/components/sidepanel/AutoGreetCard'
+import { ResumeCollectorCard } from '@/components/sidepanel/ResumeCollectorCard'
+import { ResumeListCard } from '@/components/sidepanel/ResumeListCard'
 
 export function Sidepanel() {
   const currentUrl = useCurrentUrl()
   const { status, loading, error, start, stop } = useAutoGreet()
+  const {
+    status: resumeStatus,
+    loading: resumeLoading,
+    error: resumeError,
+    start: resumeStart,
+    stop: resumeStop,
+  } = useResumeCollector()
 
   return (
     <div className="w-full h-screen overflow-y-auto p-6 bg-gradient-to-br from-blue-50 to-indigo-50">
@@ -27,6 +37,17 @@ export function Sidepanel() {
             onStart={start}
             onStop={stop}
           />
+
+          <ResumeCollectorCard
+            status={resumeStatus}
+            loading={resumeLoading}
+            error={resumeError}
+            currentUrl={currentUrl}
+            onStart={resumeStart}
+            onStop={resumeStop}
+          />
+
+          <ResumeListCard />
         </div>
       </div>
     </div>
