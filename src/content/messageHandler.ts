@@ -13,6 +13,7 @@ import {
   stopResumeCollector,
   getResumeCollectorStatus,
   updateKeywordConfig,
+  updateDownloadEnabled,
 } from './features/resumeCollector'
 import { PageType, checkPageType } from './utils/pageCheck'
 
@@ -61,6 +62,11 @@ export function handleMessage(
 
   if (request.action === 'updateKeywordConfig') {
     sendResponse(updateKeywordConfig(request.data as any))
+    return true
+  }
+
+  if (request.action === 'updateDownloadEnabled') {
+    sendResponse(updateDownloadEnabled(request.data as any))
     return true
   }
 

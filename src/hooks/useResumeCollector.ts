@@ -110,6 +110,20 @@ export function useResumeCollector() {
     }
   }, [])
 
-  return { status, loading, error, start, stop, updateKeywordConfig }
+  const updateDownloadEnabled = useCallback(async (enabled: boolean) => {
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!tabs[0]?.id) return
+
+      await chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'updateDownloadEnabled',
+        data: enabled,
+      })
+    } catch (err) {
+      console.error('更新下载设置失败:', err)
+    }
+  }, [])
+
+  return { status, loading, error, start, stop, updateKeywordConfig, updateDownloadEnabled }
 }
 

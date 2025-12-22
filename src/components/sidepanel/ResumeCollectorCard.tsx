@@ -14,6 +14,7 @@ interface ResumeCollectorCardProps {
   onStart: () => void
   onStop: () => void
   onUpdateKeywordConfig: (config: Partial<ResumeCollectorStatus['keywordConfig']>) => void
+  onUpdateDownloadEnabled: (enabled: boolean) => void
 }
 
 export function ResumeCollectorCard({
@@ -24,6 +25,7 @@ export function ResumeCollectorCard({
   onStart,
   onStop,
   onUpdateKeywordConfig,
+  onUpdateDownloadEnabled,
 }: ResumeCollectorCardProps) {
   // 如果在聊天页面，默认展开；否则默认收缩
   const [isExpanded, setIsExpanded] = useState(() => status.isCorrectPage)
@@ -138,6 +140,19 @@ export function ResumeCollectorCard({
             >
               {loading ? '停止中...' : '停止'}
             </Button>
+          </div>
+
+          <div className="flex items-center justify-between bg-muted/30 p-4 rounded-xl border border-muted">
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold">是否下载简历</span>
+              <span className="text-xs text-muted-foreground">关闭后将只发送话术和求简历，不执行下载</span>
+            </div>
+            <input
+              type="checkbox"
+              checked={status.downloadEnabled ?? true}
+              onChange={(e) => onUpdateDownloadEnabled(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
           </div>
 
           {/* 关键字话术配置 */}

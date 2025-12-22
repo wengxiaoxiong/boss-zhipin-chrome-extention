@@ -17,6 +17,7 @@ function isInChatPage(): boolean {
 
 // 简历收集器状态
 let isResumeCollecting = false
+let downloadEnabled = true // 是否下载简历，默认开启
 const processedCandidates = new Set<string>()
 const waitingForResumeCandidates = new Set<string>() // 等待简历回复的候选人
 const sentIntroMessageCandidates = new Set<string>() // 已发送打招呼消息的候选人
@@ -33,6 +34,7 @@ const STORAGE_KEYS = {
   PROCESSED_CANDIDATES: 'boss_processed_candidates',
   SENT_INTRO_CANDIDATES: 'boss_sent_intro_candidates',
   KEYWORD_CONFIG: 'boss_keyword_config',
+  DOWNLOAD_ENABLED: 'boss_download_enabled',
 }
 
 /**
@@ -44,13 +46,15 @@ async function loadPersistedState() {
       STORAGE_KEYS.WAITING_CANDIDATES,
       STORAGE_KEYS.PROCESSED_CANDIDATES,
       STORAGE_KEYS.SENT_INTRO_CANDIDATES,
-      STORAGE_KEYS.KEYWORD_CONFIG
+      STORAGE_KEYS.KEYWORD_CONFIG,
+      STORAGE_KEYS.DOWNLOAD_ENABLED
     ])
 
     const waiting = result[STORAGE_KEYS.WAITING_CANDIDATES] as string[] | undefined
     const processed = result[STORAGE_KEYS.PROCESSED_CANDIDATES] as string[] | undefined
     const sentIntro = result[STORAGE_KEYS.SENT_INTRO_CANDIDATES] as string[] | undefined
     const config = result[STORAGE_KEYS.KEYWORD_CONFIG] as typeof keywordConfig | undefined
+    const download = result[STORAGE_KEYS.DOWNLOAD_ENABLED] as boolean | undefined
 
     if (waiting) {
       waiting.forEach((id: string) => waitingForResumeCandidates.add(id))
@@ -64,7 +68,10 @@ async function loadPersistedState() {
     if (config) {
       keywordConfig = { ...keywordConfig, ...config }
     }
-    console.log(`[Resume Collector] ✅ 状态已从本地存储加载: 等待中=${waitingForResumeCandidates.size}, 已处理=${processedCandidates.size}, 已打招呼=${sentIntroMessageCandidates.size}`)
+    if (download !== undefined) {
+      downloadEnabled = download
+    }
+    console.log(`[Resume Collector] ✅ 状态已从本地存储加载: 等待中=${waitingForResumeCandidates.size}, 已处理=${processedCandidates.size}, 已打招呼=${sentIntroMessageCandidates.size}, 下载开启=${downloadEnabled}`)
   } catch (err) {
     console.error('[Resume Collector] ❌ 加载持久化状态失败:', err)
   }
@@ -78,7 +85,8 @@ async function savePersistedState() {
     await chrome.storage.local.set({
       [STORAGE_KEYS.WAITING_CANDIDATES]: Array.from(waitingForResumeCandidates),
       [STORAGE_KEYS.PROCESSED_CANDIDATES]: Array.from(processedCandidates),
-      [STORAGE_KEYS.SENT_INTRO_CANDIDATES]: Array.from(sentIntroMessageCandidates)
+      [STORAGE_KEYS.SENT_INTRO_CANDIDATES]: Array.from(sentIntroMessageCandidates),
+      [STORAGE_KEYS.DOWNLOAD_ENABLED]: downloadEnabled
     })
   } catch (err) {
     console.error('[Resume Collector] ❌ 保存持久化状态失败:', err)
@@ -560,6 +568,7 @@ function notifyResumeCollectorStatus(): void {
       requestedCount: resumeCollectorStats.requestedCount,
       currentCandidate: resumeCollectorStats.currentCandidate,
       keywordConfig: keywordConfig,
+      downloadEnabled: downloadEnabled,
     },
   })
 }
@@ -572,6 +581,16 @@ export function updateKeywordConfig(config: Partial<typeof keywordConfig>) {
   savePersistedState()
   notifyResumeCollectorStatus()
   return { success: true, data: keywordConfig }
+}
+
+/**
+ * 更新下载开启配置
+ */
+export function updateDownloadEnabled(enabled: boolean) {
+  downloadEnabled = enabled
+  savePersistedState()
+  notifyResumeCollectorStatus()
+  return { success: true, data: { downloadEnabled } }
 }
 
 /**
@@ -673,9 +692,10 @@ async function resumeCollectorLoop(): Promise<void> {
     // ==================== 阶段 1: 关键字话术检查 ====================
     if (keywordConfig.enabled) {
       const hasKeyword = hasKeywordInChat(keywordConfig.keyword)
-      await sendIntroMessage()
+      
       if (!hasKeyword) {
         console.log(`[Resume Collector] 💬 聊天记录中未发现关键字 "${keywordConfig.keyword}"，准备发送话术...`)
+        await sendIntroMessage()
         await sendCustomMessage(keywordConfig.message)
         // 发送完等一下，让消息列表更新
         await new Promise(r => setTimeout(r, 1500))
@@ -703,18 +723,6 @@ async function resumeCollectorLoop(): Promise<void> {
     } else if (status === ResumeStatus.NEED_REQUEST) {
       console.log('[Resume Collector] 📝 情况1: 求简历')
 
-
-
-      if (!sentIntroMessageCandidates.has(info.id)) {
-        console.log(`[Resume Collector] ✉️ 为 ${info.name} 发送岗位介绍消息`)
-        // 发岗位介绍消息
-        await sendIntroMessage()
-        sentIntroMessageCandidates.add(info.id)
-        await savePersistedState()
-      } else {
-        console.log(`[Resume Collector] ⏭️ 已有发送记录或聊天记录，跳过为 ${info.name} 发送打招呼消息`)
-      }
-
       const requested = await clickRequestResume()
       if (requested) {
         // 求简历成功，标记为等待回复
@@ -727,12 +735,16 @@ async function resumeCollectorLoop(): Promise<void> {
       }
     } else if (status === ResumeStatus.NEED_AGREE) {
       console.log('[Resume Collector] ✅ 情况2: 同意')
-      await clickAgreeResume()
-      // 同意后等待简历下载按钮出现
-      await new Promise(r => setTimeout(r, 2000))
-      const newStatus = await checkResumeStatus(info.name)
-      if (newStatus === ResumeStatus.HAS_RESUME) {
-        await previewAndDownloadResume(info.name)
+      if (downloadEnabled) {
+        await clickAgreeResume()
+        // 同意后等待简历下载按钮出现
+        await new Promise(r => setTimeout(r, 2000))
+        const newStatus = await checkResumeStatus(info.name)
+        if (newStatus === ResumeStatus.HAS_RESUME) {
+          await previewAndDownloadResume(info.name)
+        }
+      } else {
+        console.log('[Resume Collector] ⏭️ 下载已禁用，跳过同意')
       }
       // 移除等待标记（如果有的话）
       if (waitingForResumeCandidates.has(info.id)) {
@@ -742,7 +754,11 @@ async function resumeCollectorLoop(): Promise<void> {
       processed = true
     } else if (status === ResumeStatus.HAS_RESUME) {
       console.log('[Resume Collector] 📄 情况3: 预览并下载简历')
-      await previewAndDownloadResume(info.name)
+      if (downloadEnabled) {
+        await previewAndDownloadResume(info.name)
+      } else {
+        console.log('[Resume Collector] ⏭️ 下载已禁用，跳过预览和下载')
+      }
       // 移除等待标记（如果有的话）
       if (waitingForResumeCandidates.has(info.id)) {
         waitingForResumeCandidates.delete(info.id)
@@ -869,6 +885,7 @@ export function getResumeCollectorStatus() {
       requestedCount: resumeCollectorStats.requestedCount,
       currentCandidate: resumeCollectorStats.currentCandidate,
       keywordConfig: keywordConfig,
+      downloadEnabled: downloadEnabled,
     },
   }
 }

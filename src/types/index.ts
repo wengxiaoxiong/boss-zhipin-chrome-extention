@@ -25,6 +25,7 @@ export interface ResumeCollectorStatus {
     message: string
     enabled: boolean
   }
+  downloadEnabled?: boolean
 }
 
 export type MessageAction =
