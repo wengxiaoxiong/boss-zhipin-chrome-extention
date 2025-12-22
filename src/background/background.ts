@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Background Service Worker - 处理 Chrome 存储
 console.log('Background service worker loaded')
 

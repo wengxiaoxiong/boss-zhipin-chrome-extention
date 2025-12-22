@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * 简历收集器功能模块
  */
@@ -18,6 +19,72 @@ function isInChatPage(): boolean {
 let isResumeCollecting = false
 const processedCandidates = new Set<string>()
 const waitingForResumeCandidates = new Set<string>() // 等待简历回复的候选人
+const sentIntroMessageCandidates = new Set<string>() // 已发送打招呼消息的候选人
+
+// 关键话术配置
+let keywordConfig = {
+  keyword: 'pitchlab',
+  message: '我们做的产品主要是https://pitchlab.pro/，一个基于AI的表达训练、销售模拟、面试模拟的软件如果您想参与面试可以先尝试使用，面试内容都会基于这个产品来提问也看看您对我们VoiceAI这个方向是不是比较感兴趣～',
+  enabled: true
+}
+
+const STORAGE_KEYS = {
+  WAITING_CANDIDATES: 'boss_waiting_candidates',
+  PROCESSED_CANDIDATES: 'boss_processed_candidates',
+  SENT_INTRO_CANDIDATES: 'boss_sent_intro_candidates',
+  KEYWORD_CONFIG: 'boss_keyword_config',
+}
+
+/**
+ * 从本地存储加载状态
+ */
+async function loadPersistedState() {
+  try {
+    const result = await chrome.storage.local.get([
+      STORAGE_KEYS.WAITING_CANDIDATES,
+      STORAGE_KEYS.PROCESSED_CANDIDATES,
+      STORAGE_KEYS.SENT_INTRO_CANDIDATES,
+      STORAGE_KEYS.KEYWORD_CONFIG
+    ])
+
+    const waiting = result[STORAGE_KEYS.WAITING_CANDIDATES] as string[] | undefined
+    const processed = result[STORAGE_KEYS.PROCESSED_CANDIDATES] as string[] | undefined
+    const sentIntro = result[STORAGE_KEYS.SENT_INTRO_CANDIDATES] as string[] | undefined
+    const config = result[STORAGE_KEYS.KEYWORD_CONFIG] as typeof keywordConfig | undefined
+
+    if (waiting) {
+      waiting.forEach((id: string) => waitingForResumeCandidates.add(id))
+    }
+    if (processed) {
+      processed.forEach((id: string) => processedCandidates.add(id))
+    }
+    if (sentIntro) {
+      sentIntro.forEach((id: string) => sentIntroMessageCandidates.add(id))
+    }
+    if (config) {
+      keywordConfig = { ...keywordConfig, ...config }
+    }
+    console.log(`[Resume Collector] ✅ 状态已从本地存储加载: 等待中=${waitingForResumeCandidates.size}, 已处理=${processedCandidates.size}, 已打招呼=${sentIntroMessageCandidates.size}`)
+  } catch (err) {
+    console.error('[Resume Collector] ❌ 加载持久化状态失败:', err)
+  }
+}
+
+/**
+ * 保存状态到本地存储
+ */
+async function savePersistedState() {
+  try {
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.WAITING_CANDIDATES]: Array.from(waitingForResumeCandidates),
+      [STORAGE_KEYS.PROCESSED_CANDIDATES]: Array.from(processedCandidates),
+      [STORAGE_KEYS.SENT_INTRO_CANDIDATES]: Array.from(sentIntroMessageCandidates)
+    })
+  } catch (err) {
+    console.error('[Resume Collector] ❌ 保存持久化状态失败:', err)
+  }
+}
+
 let resumeCollectorStats = {
   processedCount: 0,
   resumeCollectedCount: 0,
@@ -117,6 +184,69 @@ async function checkResumeInDatabase(candidateName: string): Promise<boolean> {
     return false
   } catch (err) {
     console.error('[Resume Collector] ❌ 查询数据库失败:', err)
+    return false
+  }
+}
+
+/**
+ * 获取当前聊天的消息条数
+ */
+function getMessageCount(): number {
+  const messageList = document.querySelector('.chat-message-list')
+  if (!messageList) return 0
+  const messages = messageList.querySelectorAll('.message-item')
+  return messages.length
+}
+
+/**
+ * 检查当前聊天记录中是否存在关键字
+ */
+function hasKeywordInChat(keyword: string): boolean {
+  const messageList = document.querySelector('.chat-message-list')
+  if (!messageList) return false
+  const text = messageList.textContent || ''
+  return text.includes(keyword)
+}
+
+/**
+ * 直接发送文本消息
+ */
+async function sendCustomMessage(message: string): Promise<boolean> {
+  try {
+    console.log('[Resume Collector] 当前消息数',getMessageCount())
+    // 使用用户提供的高效选择器
+    const editor = document.querySelector('#boss-chat-editor-input') as HTMLElement
+    if (!editor) {
+      console.log('[Resume Collector] ❌ 未找到聊天输入框 (#boss-chat-editor-input)')
+      return false
+    }
+
+    // 聚焦编辑器
+    editor.focus()
+    
+    // 设置内容
+    editor.textContent = message
+    
+    // 触发事件
+    editor.dispatchEvent(new Event('input', { bubbles: true }))
+    editor.dispatchEvent(new Event('change', { bubbles: true }))
+    
+    // 等待一下
+    await new Promise(r => setTimeout(r, 500))
+
+    // 点击发送按钮
+    const submitContent = document.querySelector<HTMLElement>(
+      '#container > div:nth-child(1) > div > div.chat-box > div.chat-container > div.chat-conversation > div.conversation-box > div.conversation-operate > div.conversation-editor > div.submit-content > div'
+    )
+    if (submitContent) {
+      await clickWithHighlight(submitContent, 2000)
+      await new Promise(res => setTimeout(res, 500))
+    }
+
+
+    return false
+  } catch (err) {
+    console.error('[Resume Collector] 发送自定义消息失败:', err)
     return false
   }
 }
@@ -429,14 +559,27 @@ function notifyResumeCollectorStatus(): void {
       agreedCount: resumeCollectorStats.agreedCount,
       requestedCount: resumeCollectorStats.requestedCount,
       currentCandidate: resumeCollectorStats.currentCandidate,
+      keywordConfig: keywordConfig,
     },
   })
+}
+
+/**
+ * 更新关键字配置
+ */
+export function updateKeywordConfig(config: Partial<typeof keywordConfig>) {
+  keywordConfig = { ...keywordConfig, ...config }
+  savePersistedState()
+  notifyResumeCollectorStatus()
+  return { success: true, data: keywordConfig }
 }
 
 /**
  * 发送岗位介绍消息（带高亮）
  */
 async function sendIntroMessage(): Promise<void> {
+
+  // 点击工具栏中的话术的第一条
   const toolbarLeft = document.querySelector<HTMLElement>(
     '#container > div:nth-child(1) > div > div.chat-box > div.chat-container > div.chat-conversation > div.conversation-box > div.conversation-operate > div.toolbar-box > div.toolbar-box-left > div:nth-child(2) > div'
   )
@@ -453,6 +596,8 @@ async function sendIntroMessage(): Promise<void> {
     await new Promise(res => setTimeout(res, 500))
   }
 
+
+  // 点击发送按钮
   const submitContent = document.querySelector<HTMLElement>(
     '#container > div:nth-child(1) > div > div.chat-box > div.chat-container > div.chat-conversation > div.conversation-box > div.conversation-operate > div.conversation-editor > div.submit-content > div'
   )
@@ -525,6 +670,23 @@ async function resumeCollectorLoop(): Promise<void> {
       continue
     }
 
+    // ==================== 阶段 1: 关键字话术检查 ====================
+    if (keywordConfig.enabled) {
+      const hasKeyword = hasKeywordInChat(keywordConfig.keyword)
+      await sendIntroMessage()
+      if (!hasKeyword) {
+        console.log(`[Resume Collector] 💬 聊天记录中未发现关键字 "${keywordConfig.keyword}"，准备发送话术...`)
+        await sendCustomMessage(keywordConfig.message)
+        // 发送完等一下，让消息列表更新
+        await new Promise(r => setTimeout(r, 1500))
+      } else {
+        console.log(`[Resume Collector] ✅ 聊天记录中已有关键字 "${keywordConfig.keyword}"，跳过发送`)
+      }
+    }
+
+    // ==================== 阶段 2: 简历收集环节 ====================
+    console.log('[Resume Collector] 进入简历收集环节...')
+    
     // 检查简历状态（传入候选人姓名以检查数据库）
     const status = await checkResumeStatus(info.name)
 
@@ -540,12 +702,24 @@ async function resumeCollectorLoop(): Promise<void> {
       }
     } else if (status === ResumeStatus.NEED_REQUEST) {
       console.log('[Resume Collector] 📝 情况1: 求简历')
-      // 发岗位介绍消息
-      await sendIntroMessage()
+
+
+
+      if (!sentIntroMessageCandidates.has(info.id)) {
+        console.log(`[Resume Collector] ✉️ 为 ${info.name} 发送岗位介绍消息`)
+        // 发岗位介绍消息
+        await sendIntroMessage()
+        sentIntroMessageCandidates.add(info.id)
+        await savePersistedState()
+      } else {
+        console.log(`[Resume Collector] ⏭️ 已有发送记录或聊天记录，跳过为 ${info.name} 发送打招呼消息`)
+      }
+
       const requested = await clickRequestResume()
       if (requested) {
         // 求简历成功，标记为等待回复
         waitingForResumeCandidates.add(info.id)
+        await savePersistedState()
         console.log('[Resume Collector] ✅ 求简历成功，等待对方回复...')
         processed = false // 不标记为已处理
       } else {
@@ -561,23 +735,33 @@ async function resumeCollectorLoop(): Promise<void> {
         await previewAndDownloadResume(info.name)
       }
       // 移除等待标记（如果有的话）
-      waitingForResumeCandidates.delete(info.id)
+      if (waitingForResumeCandidates.has(info.id)) {
+        waitingForResumeCandidates.delete(info.id)
+        await savePersistedState()
+      }
       processed = true
     } else if (status === ResumeStatus.HAS_RESUME) {
       console.log('[Resume Collector] 📄 情况3: 预览并下载简历')
       await previewAndDownloadResume(info.name)
       // 移除等待标记（如果有的话）
-      waitingForResumeCandidates.delete(info.id)
+      if (waitingForResumeCandidates.has(info.id)) {
+        waitingForResumeCandidates.delete(info.id)
+        await savePersistedState()
+      }
       processed = true
     } else if (status === ResumeStatus.ALREADY_COLLECTED) {
       console.log('[Resume Collector] ✓ 情况4: 已收集，跳过')
       // 移除等待标记（如果有的话）
-      waitingForResumeCandidates.delete(info.id)
+      if (waitingForResumeCandidates.has(info.id)) {
+        waitingForResumeCandidates.delete(info.id)
+        await savePersistedState()
+      }
       processed = true
     }
 
     if (processed) {
       processedCandidates.add(info.id)
+      await savePersistedState()
       resumeCollectorStats.processedCount++
       resumeCollectorStats.currentCandidate = null
       notifyResumeCollectorStatus()
@@ -601,7 +785,7 @@ async function resumeCollectorLoop(): Promise<void> {
 /**
  * 启动简历收集器
  */
-export function startResumeCollector() {
+export async function startResumeCollector() {
   console.log('[Resume Collector] 🚀 启动请求')
 
   // 验证页面类型
@@ -620,10 +804,12 @@ export function startResumeCollector() {
   }
 
   isResumeCollecting = true
-  processedCandidates.clear()
-  waitingForResumeCandidates.clear()
+
+  // 加载持久化状态
+  await loadPersistedState()
+
   resumeCollectorStats = {
-    processedCount: 0,
+    processedCount: processedCandidates.size, // 基于已处理的数量初始化
     resumeCollectedCount: 0,
     agreedCount: 0,
     requestedCount: 0,
@@ -682,6 +868,7 @@ export function getResumeCollectorStatus() {
       agreedCount: resumeCollectorStats.agreedCount,
       requestedCount: resumeCollectorStats.requestedCount,
       currentCandidate: resumeCollectorStats.currentCandidate,
+      keywordConfig: keywordConfig,
     },
   }
 }

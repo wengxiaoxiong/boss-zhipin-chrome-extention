@@ -12,6 +12,7 @@ import {
   startResumeCollector,
   stopResumeCollector,
   getResumeCollectorStatus,
+  updateKeywordConfig,
 } from './features/resumeCollector'
 import { PageType, checkPageType } from './utils/pageCheck'
 
@@ -58,9 +59,16 @@ export function handleMessage(
     return true
   }
 
+  if (request.action === 'updateKeywordConfig') {
+    sendResponse(updateKeywordConfig(request.data as any))
+    return true
+  }
+
   // 简历收集器消息处理
   if (request.type === 'START_RESUME_COLLECTOR') {
-    sendResponse(startResumeCollector())
+    startResumeCollector().then(response => {
+      sendResponse(response)
+    })
     return true
   }
 

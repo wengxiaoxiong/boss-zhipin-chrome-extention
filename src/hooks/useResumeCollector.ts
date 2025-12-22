@@ -10,6 +10,11 @@ export function useResumeCollector() {
     agreedCount: 0,
     requestedCount: 0,
     currentCandidate: null,
+    keywordConfig: {
+      keyword: '',
+      message: '',
+      enabled: false,
+    },
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -91,6 +96,20 @@ export function useResumeCollector() {
     }
   }, [])
 
-  return { status, loading, error, start, stop }
+  const updateKeywordConfig = useCallback(async (config: Partial<ResumeCollectorStatus['keywordConfig']>) => {
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!tabs[0]?.id) return
+
+      await chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'updateKeywordConfig',
+        data: config,
+      })
+    } catch (err) {
+      console.error('更新关键字配置失败:', err)
+    }
+  }, [])
+
+  return { status, loading, error, start, stop, updateKeywordConfig }
 }
 

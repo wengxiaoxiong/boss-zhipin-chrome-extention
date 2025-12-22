@@ -20,6 +20,11 @@ export interface ResumeCollectorStatus {
   agreedCount: number
   requestedCount: number
   currentCandidate: string | null
+  keywordConfig?: {
+    keyword: string
+    message: string
+    enabled: boolean
+  }
 }
 
 export type MessageAction =
@@ -28,10 +33,12 @@ export type MessageAction =
   | 'startAutoGreet'
   | 'stopAutoGreet'
   | 'getAutoGreetStatus'
+  | 'updateKeywordConfig'
 
 export interface MessageRequest {
   action?: MessageAction
   type?: 'START_RESUME_COLLECTOR' | 'STOP_RESUME_COLLECTOR' | 'GET_RESUME_COLLECTOR_STATUS'
+  data?: any
 }
 
 export interface PageInfo {

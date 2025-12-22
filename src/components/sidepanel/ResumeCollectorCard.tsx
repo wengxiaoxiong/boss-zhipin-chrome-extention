@@ -13,6 +13,7 @@ interface ResumeCollectorCardProps {
   currentUrl: string
   onStart: () => void
   onStop: () => void
+  onUpdateKeywordConfig: (config: Partial<ResumeCollectorStatus['keywordConfig']>) => void
 }
 
 export function ResumeCollectorCard({
@@ -22,6 +23,7 @@ export function ResumeCollectorCard({
   currentUrl,
   onStart,
   onStop,
+  onUpdateKeywordConfig,
 }: ResumeCollectorCardProps) {
   // 如果在聊天页面，默认展开；否则默认收缩
   const [isExpanded, setIsExpanded] = useState(() => status.isCorrectPage)
@@ -136,6 +138,44 @@ export function ResumeCollectorCard({
             >
               {loading ? '停止中...' : '停止'}
             </Button>
+          </div>
+
+          {/* 关键字话术配置 */}
+          <div className="bg-muted/30 p-4 rounded-xl border border-muted space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold">关键字话术检查</div>
+              <input
+                type="checkbox"
+                checked={status.keywordConfig?.enabled}
+                onChange={(e) => onUpdateKeywordConfig({ enabled: e.target.checked })}
+                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">检查关键字 (如：微信)</label>
+              <input
+                type="text"
+                value={status.keywordConfig?.keyword || ''}
+                onChange={(e) => onUpdateKeywordConfig({ keyword: e.target.value })}
+                placeholder="请输入关键字"
+                className="w-full px-3 py-2 text-sm bg-background border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">发送话术 (若聊天中没有关键字则发送)</label>
+              <textarea
+                value={status.keywordConfig?.message || ''}
+                onChange={(e) => onUpdateKeywordConfig({ message: e.target.value })}
+                placeholder="请输入要发送的话术"
+                rows={3}
+                className="w-full px-3 py-2 text-sm bg-background border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              注：每处理一个候选人时，若聊天记录中不包含关键字，将自动发送此话术。
+            </p>
           </div>
 
           {status.currentCandidate && (

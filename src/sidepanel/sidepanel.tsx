@@ -17,6 +17,7 @@ export function Sidepanel() {
     error: resumeError,
     start: resumeStart,
     stop: resumeStop,
+    updateKeywordConfig: resumeUpdateKeywordConfig,
   } = useResumeCollector()
 
   return (
@@ -45,6 +46,7 @@ export function Sidepanel() {
             currentUrl={currentUrl}
             onStart={resumeStart}
             onStop={resumeStop}
+            onUpdateKeywordConfig={resumeUpdateKeywordConfig}
           />
 
           <ResumeListCard />

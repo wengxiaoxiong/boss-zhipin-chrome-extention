@@ -229,7 +229,7 @@ async function autoGreetLoop(): Promise<void> {
       clickedCandidates.add(id)
       newClicks++
       console.log(`[Auto Greet] ✅ 成功！总计: ${clickedCandidates.size}`)
-      await new Promise(r => setTimeout(r, 5000))
+      await new Promise(r => setTimeout(r, 2000))
     }
   }
 
